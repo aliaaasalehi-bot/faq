@@ -53,6 +53,13 @@ services:
     volumes:
       - wpdata:/var/www/html
       - ./faq-manager-pro:/var/www/html/wp-content/plugins/faq-manager-pro
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "cd /var/www/html && wp core is-installed && wp plugin is-active faq-manager-pro"]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     entrypoint: ["sh", "-ec"]
     command:
       - |
@@ -69,6 +76,8 @@ services:
           wp post meta update $$p _fmp_items "[$$a,$$b,$$c]" --format=json
         fi
         wp plugin activate faq-manager-pro || true
+        echo "setup complete; staying alive so health can be reported"
+        exec sleep infinity
 
 volumes:
   dbdata:
