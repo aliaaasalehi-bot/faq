@@ -1,0 +1,75 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: on-failure
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp-dev-pass
+      MYSQL_ROOT_PASSWORD: root-dev-pass
+    volumes: [dbdata:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot-dev-pass --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  wordpress:
+    image: wordpress:6-php8.2-apache
+    restart: on-failure
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["3000:80"]
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp-dev-pass
+      WORDPRESS_DEBUG: "1"
+      BASE44_PUBLIC_HOST_SUFFIX: ${BASE44_PUBLIC_HOST_SUFFIX}
+      WORDPRESS_CONFIG_EXTRA: "define('WP_HOME','https://3000-'.getenv('BASE44_PUBLIC_HOST_SUFFIX')); define('WP_SITEURL','https://3000-'.getenv('BASE44_PUBLIC_HOST_SUFFIX')); $$_SERVER['HTTPS']='on';"
+    volumes:
+      - wpdata:/var/www/html
+      - ./faq-manager-pro:/var/www/html/wp-content/plugins/faq-manager-pro
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@file_get_contents(\"http://localhost/wp-login.php\")!==false?0:1);'"]
+      interval: 10s
+      timeout: 8s
+      retries: 10
+      start_period: 30s
+
+  setup:
+    image: wordpress:cli-php8.2
+    user: "33:33"
+    depends_on:
+      wordpress: { condition: service_healthy }
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp-dev-pass
+      BASE44_PUBLIC_HOST_SUFFIX: ${BASE44_PUBLIC_HOST_SUFFIX}
+    volumes:
+      - wpdata:/var/www/html
+      - ./faq-manager-pro:/var/www/html/wp-content/plugins/faq-manager-pro
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        cd /var/www/html
+        if ! wp core is-installed 2>/dev/null; then
+          wp core install --url="https://3000-$$BASE44_PUBLIC_HOST_SUFFIX" --title="FAQ Demo" --admin_user=admin --admin_password=admin-dev-pass --admin_email=admin@example.com --skip-email
+          wp rewrite structure '/%postname%/'
+          wp plugin activate faq-manager-pro
+          a=$$(wp post create --post_type=faq --post_status=publish --post_title='How do I get started?' --post_content='Install, write FAQs and attach them to any page. <a href="#">Read more</a>' --porcelain)
+          b=$$(wp post create --post_type=faq --post_status=publish --post_title='Does it support ACF post types?' --post_content='Yes, every public post type is supported.' --porcelain)
+          c=$$(wp post create --post_type=faq --post_status=publish --post_title='Is the design customizable?' --post_content='Colors, borders, fonts, icons, hover and more.' --porcelain)
+          wp post meta update $$c _fmp_archived 1
+          p=$$(wp post create --post_type=page --post_status=publish --post_title='FAQ Demo' --post_content='[faq_manager]' --porcelain)
+          wp post meta update $$p _fmp_items "[$$a,$$b,$$c]" --format=json
+        fi
+        wp plugin activate faq-manager-pro || true
+
+volumes:
+  dbdata:
+  wpdata:
